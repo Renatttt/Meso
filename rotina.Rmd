@@ -1,0 +1,98 @@
+---
+title: "Financ_MI"
+author: "Renata Martins"
+date: "2025-06-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Pacotes utilizados
+```{r}
+library(bibliometrix)
+library(bibtex) 
+library(bib2df)
+library(dplyr)
+library(stringr)
+library(utils)
+library(jsonlite)
+library(openxlsx)
+```
+
+
+# Unificando arquivos .bib extraídos da WoS
+```{r}
+setwd("C:/Users/renat/OneDrive/Área de Trabalho/Financ_MI/Publicações Microsoft")
+
+path_to_bib_files <- list.files(".", pattern="\\.bib$", full.names=TRUE)
+
+combined_bib <- ""
+for (path_to_bib_file in path_to_bib_files) {
+  
+  fileCon <- file(path_to_bib_file)
+  content <- readLines(fileCon)
+  close(fileCon)
+  
+  combined_bib <- paste0(combined_bib, "\n", "\n", trimws(paste0(content, collapse="\n")))
+  
+} 
+
+cat(combined_bib, file="11631_total_2.bib", "\n") 
+
+
+biblioshiny()
+```
+
+```{r}
+Microsoft <- convert2df("11631_total_2.bib", dbsource= "isi", format = "bibtex")
+
+Microsoft_2 <- Microsoft
+
+Microsoft_2$AU_UN <- gsub("[^;]*;?\\s*\\(CORRESPONDING AUTHOR\\)\\s*;?", "", Microsoft$AU_UN)
+
+Microsoft_3 <- Microsoft_2
+
+# Substituir "RES" por "MICROSOFT RES" na coluna AU_UN
+Microsoft_3$AU_UN <- gsub("(?<!MICROSOFT\\s)\\bRES\\b", "MICROSOFT RES",
+                          Microsoft_2$AU_UN, perl = TRUE)
+
+
+write.xlsx(Microsoft_3, "Microsoft_3.xlsx")
+```
+
+
+```{r}
+# Função que retorna TRUE se algum bloco de afiliação tiver "corresponding author" no campo da instituição
+has_corresponding_author_in_institution <- function(C1_string) {
+  # divide em blocos por ';'
+  blocks <- unlist(strsplit(C1_string, ";"))
+  
+  # verificar cada bloco
+  any(sapply(blocks, function(block) {
+    # divide por vírgulas
+    parts <- unlist(strsplit(block, ","))
+    if(length(parts) >= 3) {
+      # pega tudo depois da segunda vírgula (posição da instituição)
+      inst <- paste(parts[3:length(parts)], collapse = ",")
+      inst <- str_squish(inst)
+      return(str_detect(inst, regex("corresponding author", ignore_case = TRUE)))
+    } else {
+      FALSE
+    }
+  }))
+}
+
+# Aplicar ao df Microsoft
+ms_problems <- Microsoft %>%
+  rowwise() %>%
+  mutate(has_problem = has_corresponding_author_in_institution(C1)) %>%
+  ungroup() %>%
+  filter(has_problem)
+
+# Mostrar as linhas com problema
+ms_problems %>% select(PY, TI, C1)
+```
+

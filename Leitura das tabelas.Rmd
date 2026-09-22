@@ -1,0 +1,299 @@
+---
+title: "Leitura das tabelas"
+author: "Renata"
+date: "04/08/2025"
+output: 
+  word_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Pacotes
+library(dplyr)
+library(writexl)
+library(openxlsx)
+library(tidyr)
+library(readxl)
+```
+
+
+
+```{r}
+#Lendo os dados 
+EMPRESAS <- read.delim("2023-COR&DIP_company_list.txt", header= TRUE, sep = "|")
+
+Financial <- read.delim("2023-COR&DIP_company_financial.txt", header= TRUE, sep = "|")
+
+Pat_port <- read.delim("2023-COR&DIP_patent_portfolio.txt", header= TRUE, sep = "|")
+
+
+# Frquencia de NACE2
+Freq_NACE <- as.data.frame(table(EMPRESAS$NACE2))
+
+EMPRESAS_5829 <- EMPRESAS %>% 
+  filter(NACE2 == "5829")
+#143 empresas
+
+
+# Cruzando as informações
+Financial_5829 <- merge(EMPRESAS_5829, Financial, by = "Company_id")
+
+Pat_port_5829 <- merge(EMPRESAS_5829, Pat_port, by = "Company_id")
+
+
+
+# Número de patentes por empresa (não filtrei ano nenhum, as infos de pat tem anos de 2018-2022)
+Freq_pat_emp <- Pat_port_5829 %>%
+  group_by(Company_id) %>%
+  summarise(num_patentes = n_distinct(Patent_appln_id))
+
+Pat_Microsoft <-  Pat_port_5829 %>% 
+  filter(Company_id == "1926")
+
+#Escritórios das patentes da Microsoft
+Freq_publn_auth_Microsoft <- as.data.frame(table(Pat_Microsoft$Publn_auth))
+
+# Mais de um dos 5 principais escritórios
+IP5_2_off_Microsoft <- as.data.frame(table(Pat_Microsoft$IP5_2_offices))
+
+
+
+#Separando por ano
+Financial_5829_2017 <- Financial_5829 %>% 
+  filter(Year == "2017")
+
+Financial_5829_2018 <- Financial_5829 %>% 
+  filter(Year == "2018")
+
+Financial_5829_2019 <- Financial_5829 %>% 
+  filter(Year == "2019")
+
+Financial_5829_2020 <- Financial_5829 %>% 
+  filter(Year == "2020")
+
+
+
+#Cruzando tudo para 2020
+# Lembrando que as patentes não tem "ano", elas são de 2018-2022
+Financial_Pat_5829_2020 <- Financial_5829_2020 %>%
+  left_join(Freq_pat_emp, by = "Company_id") %>%
+  mutate(num_patentes = replace_na(num_patentes, 0))
+
+```
+
+# Criando interações 
+```{r}
+#RD_OP
+Financial_Pat_5829_2020$RD_OP <- Financial_Pat_5829_2020$RD / Financial_Pat_5829_2020$OP
+# Embora seja a empresa que mais gaste m PD, em termos absolutos, no setor. A Microsoft é uma empresa bem consolidada, com lucro operacional muito alto, o que faz com que sua relação PD_OP não seja tão impressionante quanto a de outras empresas do setor
+
+#RD_NS
+Financial_Pat_5829_2020$RD_NS <- Financial_Pat_5829_2020$RD / Financial_Pat_5829_2020$NS
+
+#Relação CAPEX_RD
+Financial_Pat_5829_2020$RD_CAPEX <- Financial_Pat_5829_2020$RD / Financial_Pat_5829_2020$CAPEX
+# A Microsoft gasta quase a mesma coisa em PD e em Capex
+```
+
+
+
+#Comparação em posição relativa
+```{r}
+# Ranking por gasto em P&D
+ranking_rd <- Financial_Pat_5829_2020 %>%
+  arrange(desc(RD)) %>%
+  mutate(Rank_RD = row_number()) %>%
+  select(Rank_RD, Company_name, RD)
+
+# Ranking por receita líquida
+ranking_NS <- Financial_Pat_5829_2020 %>%
+  arrange(desc(NS)) %>%
+  mutate(Rank_NS = row_number()) %>%
+  select(Rank_NS, Company_name, NS)
+
+# Ranking por lucro operacional
+ranking_OP <- Financial_Pat_5829_2020 %>%
+  arrange(desc(OP)) %>%
+  mutate(Rank_OP = row_number()) %>%
+  select(Rank_OP, Company_name, OP)
+
+# Ranking por número de patentes
+ranking_patents <- Financial_Pat_5829_2020 %>%
+  arrange(desc(num_patentes)) %>%
+  mutate(Rank_Patents = row_number()) %>%
+  select(Rank_Patents, Company_name, num_patentes)
+
+
+ranking_all <- Financial_Pat_5829_2020 %>%
+  mutate(
+    Rank_rd = rank(-RD),
+    Rank_Sales = rank(-NS),
+    Rank_Profit = rank(-OP),
+    Rank_Patents = rank(-num_patentes)
+  ) %>%
+  select(Company_name, Rank_rd, Rank_Sales, Rank_Profit, Rank_Patents)
+
+
+# Salvando
+wb <- createWorkbook()
+
+addWorksheet(wb, "RD")
+writeData(wb, "RD", ranking_rd)
+
+addWorksheet(wb, "Net Sales")
+writeData(wb, "Net Sales", ranking_NS)
+
+addWorksheet(wb, "Operating Profits")
+writeData(wb, "Operating Profits", ranking_OP)
+
+addWorksheet(wb, "Patents")
+writeData(wb, "Patents", ranking_patents)
+
+addWorksheet(wb, "All")
+writeData(wb, "All", ranking_all)
+
+
+
+saveWorkbook(wb, file = "Ranking.xlsx", overwrite = TRUE)
+
+```
+
+
+# Participação relativa
+```{r}
+microsoft_data <- Financial_Pat_5829_2020 %>% filter(Company_name == "MICROSOFT")
+
+# Soma total do setor para cada variável
+total_setor <- Financial_Pat_5829_2020 %>%
+  summarise(
+    total_RD = sum(RD, na.rm = TRUE),
+    total_sales = sum(NS, na.rm = TRUE),
+    total_profit = sum(OP, na.rm = TRUE),
+    total_patents = sum(num_patentes, na.rm = TRUE)
+  )
+
+# Calcula as participações relativas da Microsoft
+participacao_microsoft <- microsoft_data %>%
+  summarise(
+    PD_pct = RD / total_setor$total_RD * 100,
+    Net_Sales_pct = NS / total_setor$total_sales * 100,
+    Operating_Profit_pct = OP / total_setor$total_profit * 100,
+    Patents_pct = num_patentes / total_setor$total_patents * 100
+  )
+
+participacao_microsoft <- participacao_microsoft %>%
+  mutate(across(everything(), ~ round(.x, 2)))
+
+write_xlsx(participacao_microsoft, "Participação.xlsx")
+```
+
+
+# Dados Orbis (Valores de 2024)
+```{r}
+dados_orbis <- read_excel("Orbis.xlsx", sheet = "Results")
+
+dados_orbis2 <- dados_orbis %>%
+  filter(Inactive == "No")
+
+names(dados_orbis2)[2] <- "Company_name"
+names(dados_orbis2)[13] <- "Market_cap_2024"
+names(dados_orbis2)[14] <- "Intang_2024"
+names(dados_orbis2)[16] <- "RD_2024"
+
+dados_orbis2 <- dados_orbis2 %>%
+  mutate(
+    Market_cap_2024 = as.numeric(Market_cap_2024),
+    Intang_2024 = as.numeric(Intang_2024),
+    RD_2024 = as.numeric(RD_2024)
+  )
+
+
+# Tirando NAs
+dados_orbis2 <- dados_orbis2 %>%
+  mutate(
+    Market_cap_2024 = na_if(Market_cap_2024, "n.a."),
+    Intang_2024 = na_if(Intang_2024, "n.a."),
+    RD_2024 = na_if(RD_2024, "n.a.")
+  )
+
+
+dados_orbis2 <- dados_orbis2 %>%
+  drop_na(Market_cap_2024, Intang_2024, RD_2024)
+
+
+# Pegando apenas as 200 empresas que mais investem em PD e selecionando variáveis de interesse
+options(scipen = 999)
+
+dados_orbis3 <- dados_orbis2 %>%
+  arrange(desc(RD_2024)) %>%                 
+  slice_head(n = 200) %>%                     
+  select(Company_name, Market_cap_2024, Intang_2024, RD_2024) 
+
+
+# Deixando os valores em milhões
+dados_orbis3 <- dados_orbis3 %>%
+  mutate(
+    Intang_2024 = as.numeric(Intang_2024) / 1000,
+    RD_2024 = as.numeric(RD_2024) / 1000
+  )
+
+
+```
+
+#Analisando
+
+A Microsoft lidera, tanto em valor de mercado, quanto em PD e intangíveis
+```{r}
+# Ranking
+ranking_all_orbis <- dados_orbis3 %>%
+  mutate(
+    Rank_Intang = rank(-Intang_2024),
+    Rank_Mrkt_cap = rank(-Market_cap_2024)
+  ) 
+
+# Participação relativa
+microsoft_data <- dados_orbis3 %>% filter(Company_name == "MICROSOFT CORPORATION")
+
+# Soma total do setor para cada variável
+total_setor <- dados_orbis3 %>%
+  summarise(
+    total_RD = sum(RD_2024, na.rm = TRUE),
+    total_mrkt_cap = sum(Market_cap_2024, na.rm = TRUE),
+    total_intang = sum(Intang_2024, na.rm = TRUE)
+  )
+
+# Calcula as participações relativas da Microsoft
+participacao_microsoft <- microsoft_data %>%
+  summarise(
+    RD_pct = RD_2024 / total_setor$total_RD * 100,
+    mrkt_cap_pct = Market_cap_2024 / total_setor$total_mrkt_cap * 100,
+    intang_pct = Intang_2024 / total_setor$total_intang * 100
+  )
+
+participacao_microsoft <- participacao_microsoft %>%
+  mutate(across(everything(), ~ round(.x, 2)))
+
+
+write_xlsx(participacao_microsoft, "Participação_Orbis.xlsx")
+
+write_xlsx(ranking_all_orbis, "Ranking_Orbis.xlsx")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
